@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+selenium
+webdriver-manager
+beautifulsoup4
+transformers
+torch
