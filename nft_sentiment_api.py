@@ -1,77 +1,23 @@
-# nft_sentiment_api_fast.py
+# nft_sentiment_api_lightest.py
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
-from transformers import pipeline
+import requests
 import urllib.parse
-import time
-import random
+from textblob import TextBlob
 
-app = FastAPI(title="NFT Sentiment Analyzer API")
+app = FastAPI(title="NFT Sentiment Analyzer API Lightest")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",        # for local development
-        "https://www.blocnexus.site",   # your deployed frontend
+        "http://localhost:3000",
+        "https://www.blocnexus.site",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-sentiment_model = pipeline("sentiment-analysis")
-
-# -----------------------------
-# Selenium driver
-# -----------------------------
-def create_driver():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--log-level=3")
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-    return driver
-
-# -----------------------------
-# Google News scraping
-# -----------------------------
-def fetch_google_news(nft_name, max_pages=3):
-    driver = create_driver()
-    articles = []
-    try:
-        for page in range(max_pages):
-            start = page * 10
-            query = urllib.parse.quote_plus(f"{nft_name} NFT news")
-            url = f"https://www.google.com/search?q={query}&tbm=nws&start={start}"
-            try:
-                driver.get(url)
-                time.sleep(random.uniform(1, 2))  # reduce sleep for speed
-                soup = BeautifulSoup(driver.page_source, "html.parser")
-                for g in soup.select("div.SoaBEf"):
-                    title_tag = g.select_one("div:nth-of-type(1) a")
-                    title = g.get_text(" ", strip=True)
-                    link = title_tag['href'] if title_tag else url
-                    if title:
-                        articles.append({
-                            "text": title,
-                            "platform": "Google News",
-                            "timestamp": None,
-                            "source_url": link
-                        })
-            except Exception as e:
-                print(f"Google News page {page} failed: {e}")
-    finally:
-        driver.quit()
-    return articles
 
 # -----------------------------
 # Sentiment analysis
@@ -87,15 +33,46 @@ def analyze_post_sentiment(text):
     for kw in NEGATIVE_KEYWORDS:
         if kw in text_lower:
             return "NEGATIVE", -1
-    result = sentiment_model(text)[0]
-    label = result["label"].upper()
-    if label == "POSITIVE":
+
+    # TextBlob sentiment (polarity -1 to 1)
+    blob = TextBlob(text)
+    polarity = blob.sentiment.polarity
+    if polarity > 0.1:
         return "POSITIVE", 0.5
-    elif label == "NEGATIVE":
+    elif polarity < -0.1:
         return "NEGATIVE", -0.5
     else:
         return "NEUTRAL", 0
 
+# -----------------------------
+# Google News scraping
+# -----------------------------
+def fetch_google_news(nft_name, max_articles=10):
+    query = urllib.parse.quote_plus(f"{nft_name} NFT news")
+    url = f"https://www.google.com/search?q={query}&tbm=nws"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    articles = []
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(response.text, "html.parser")
+        for g in soup.select("div.SoaBEf")[:max_articles]:
+            title_tag = g.select_one("div:nth-of-type(1) a")
+            title = g.get_text(" ", strip=True)
+            link = title_tag['href'] if title_tag else url
+            if title:
+                articles.append({
+                    "text": title,
+                    "platform": "Google News",
+                    "timestamp": None,
+                    "source_url": link
+                })
+    except Exception as e:
+        print(f"Error fetching Google News: {e}")
+    return articles
+
+# -----------------------------
+# Analyze sentiments
+# -----------------------------
 def analyze_sentiments_texts(posts):
     if not posts:
         return [], {"POSITIVE":0,"NEGATIVE":0,"NEUTRAL":0,"HYPE":0}, "No data 😐"
@@ -108,22 +85,22 @@ def analyze_sentiments_texts(posts):
     total = sum(scores_count.values())
     percentages = {k: round((v/total)*100,1) for k,v in scores_count.items()}
     overall_score = sum(p["score"] for p in posts)
-    if overall_score > 5:
+    if overall_score > 2:
         trend = "Hype/Positive 🚀"
-    elif overall_score < -5:
+    elif overall_score < -2:
         trend = "Negative ⚠️"
     else:
         trend = "Neutral 😐"
     return posts, percentages, trend
 
 # -----------------------------
-# API Endpoint (Google News only)
+# API endpoint
 # -----------------------------
 @app.get("/analyze")
 def analyze_nft(nft_name: str = Query(..., description="Name of the NFT")):
     try:
-        google_news = fetch_google_news(nft_name, max_pages=3)
-        all_posts = [p for p in google_news if len(p["text"])>20]
+        articles = fetch_google_news(nft_name)
+        all_posts = [p for p in articles if len(p["text"])>20]
 
         if not all_posts:
             return {"error": "No recent data found for this NFT."}
