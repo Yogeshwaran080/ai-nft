@@ -14,6 +14,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "https://www.blocnexus.site",
+        "https://www.blocnexus.site",
+        "http://localhost:3001
     ],
     allow_credentials=True,
     allow_methods=["*"],
